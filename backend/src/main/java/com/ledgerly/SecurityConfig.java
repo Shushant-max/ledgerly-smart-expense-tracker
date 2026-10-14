@@ -1,3 +1,4 @@
+
 package com.ledgerly;
 
 import io.jsonwebtoken.Claims;
@@ -12,7 +13,6 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -36,13 +36,15 @@ import java.util.List;
 class SecurityConfig {
 
     @Value("${app.jwt.secret}")
-    String secret;
+    private String secret;
 
     @Value("${app.cors.origins}")
-    String origins;
+    private String origins;
 
     SecretKey key() {
-        return Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
+        return Keys.hmacShaKeyFor(
+                secret.getBytes(StandardCharsets.UTF_8)
+        );
     }
 
     @Bean
@@ -52,21 +54,30 @@ class SecurityConfig {
 
     @Bean
     CorsConfigurationSource corsConfigurationSource() {
-        CorsConfiguration c = new CorsConfiguration();
+        CorsConfiguration config = new CorsConfiguration();
 
-        c.setAllowedOriginPatterns(Arrays.asList(origins.split(",")));
-        c.setAllowedMethods(
+        config.setAllowedOriginPatterns(
+                Arrays.stream(origins.split(","))
+                        .map(String::trim)
+                        .filter(origin -> !origin.isEmpty())
+                        .toList()
+        );
+
+        config.setAllowedMethods(
                 List.of("GET", "POST", "PUT", "DELETE", "OPTIONS")
         );
-        c.setAllowedHeaders(
+
+        config.setAllowedHeaders(
                 List.of("Authorization", "Content-Type")
         );
-        c.setAllowCredentials(false);
+
+        config.setAllowCredentials(false);
 
         UrlBasedCorsConfigurationSource source =
                 new UrlBasedCorsConfigurationSource();
 
-        source.registerCorsConfiguration("/**", c);
+        source.registerCorsConfiguration("/**", config);
+
         return source;
     }
 
@@ -81,10 +92,11 @@ class SecurityConfig {
                         )
                 )
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/auth/**", "/api/health")
-                        .permitAll()
-                        .anyRequest()
-                        .authenticated()
+                        .requestMatchers(
+                                "/api/auth/**",
+                                "/api/health"
+                        ).permitAll()
+                        .anyRequest().authenticated()
                 )
                 .addFilterBefore(
                         new JwtFilter(key()),
@@ -94,7 +106,7 @@ class SecurityConfig {
                         exceptions.authenticationEntryPoint(
                                 (request, response, exception) ->
                                         response.sendError(
-                                                401,
+                                                HttpServletResponse.SC_UNAUTHORIZED,
                                                 "Authentication required"
                                         )
                         )
@@ -108,6 +120,17 @@ class SecurityConfig {
 
         JwtFilter(SecretKey key) {
             this.key = key;
+        }
+
+        @Override
+        protected boolean shouldNotFilter(
+                HttpServletRequest request
+        ) {
+            String path = request.getServletPath();
+
+            return "OPTIONS".equalsIgnoreCase(request.getMethod())
+                    || path.startsWith("/api/auth/")
+                    || path.equals("/api/health");
         }
 
         @Override
@@ -140,12 +163,21 @@ class SecurityConfig {
                             .setAuthentication(authentication);
 
                 } catch (Exception exception) {
+                    SecurityContextHolder.clearContext();
+
                     response.sendError(
                             HttpServletResponse.SC_UNAUTHORIZED,
                             "Invalid or expired token"
                     );
                     return;
                 }
+            }
+
+            chain.doFilter(request, response);
+        }
+    }
+}
+
             }
 
             chain.doFilter(request, response);
